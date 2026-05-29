@@ -15,7 +15,7 @@ model:
     network:
       class_path: models.eomt.EoMT
       init_args:
-        num_q: 50
+        num_q: 100
         num_blocks: 3
         encoder:
           class_path: models.vit.ViT
