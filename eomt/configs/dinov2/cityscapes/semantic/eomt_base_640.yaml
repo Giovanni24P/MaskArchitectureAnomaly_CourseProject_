@@ -1,5 +1,5 @@
 trainer:
-  max_epochs: 107
+  max_epochs: 5
   logger:
     class_path: lightning.pytorch.loggers.wandb.WandbLogger
     init_args:
@@ -15,7 +15,7 @@ model:
     network:
       class_path: models.eomt.EoMT
       init_args:
-        num_q: 100
+        num_q: 50
         num_blocks: 3
         encoder:
           class_path: models.vit.ViT
