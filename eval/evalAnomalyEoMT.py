@@ -78,7 +78,16 @@ def infer_defaults(config):
     return 19, (1024, 1024)
 
 
-def load_eomt(config_path, ckpt_path, device, img_size=None, num_classes=None):
+def normalize_state_dict(ckpt_path):
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+    state = {k.replace("._orig_mod", ""): v for k, v in state.items()}
+    if any(k.startswith("network.") for k in state):
+        state = {k.removeprefix("network."): v for k, v in state.items()}
+    return state
+
+
+def load_eomt(config_path, ckpt_path, device, img_size=None, num_classes=None, num_q=None):
     try:
         from models.eomt import EoMT
         from models.vit import ViT
@@ -105,8 +114,11 @@ def load_eomt(config_path, ckpt_path, device, img_size=None, num_classes=None):
         or nested_get(config, ["data", "init_args", "num_classes"], default_classes)
     )
 
+    state = normalize_state_dict(ckpt_path)
     network_args = nested_get(config, ["model", "init_args", "network", "init_args"], {})
     encoder_args = nested_get(network_args, ["encoder", "init_args"], {})
+    checkpoint_num_q = state["q.weight"].shape[0] if "q.weight" in state else None
+    num_q = int(num_q or checkpoint_num_q or network_args.get("num_q", 200))
 
     encoder = ViT(
         img_size=img_size,
@@ -117,16 +129,10 @@ def load_eomt(config_path, ckpt_path, device, img_size=None, num_classes=None):
     model = EoMT(
         encoder=encoder,
         num_classes=num_classes,
-        num_q=int(network_args.get("num_q", 200)),
+        num_q=num_q,
         num_blocks=int(network_args.get("num_blocks", 3)),
         masked_attn_enabled=bool(network_args.get("masked_attn_enabled", True)),
     )
-
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-    state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
-    state = {k.replace("._orig_mod", ""): v for k, v in state.items()}
-    if any(k.startswith("network.") for k in state):
-        state = {k.removeprefix("network."): v for k, v in state.items()}
 
     incompatible = model.load_state_dict(state, strict=False)
     if incompatible.unexpected_keys:
@@ -284,6 +290,12 @@ def main():
     parser.add_argument("--dataset-name", default="")
     parser.add_argument("--img-size", nargs=2, type=int, default=None)
     parser.add_argument("--num-classes", type=int, default=None)
+    parser.add_argument(
+        "--num-q",
+        type=int,
+        default=None,
+        help="Number of EoMT queries. Defaults to the checkpoint q.weight size.",
+    )
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument(
         "--method",
@@ -315,6 +327,7 @@ def main():
         device,
         img_size=args.img_size,
         num_classes=args.num_classes,
+        num_q=args.num_q,
     )
     print(f"Model loaded with img_size={model_img_size}")
 
