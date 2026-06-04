@@ -192,7 +192,7 @@ def revert_window_scores(crop_scores, origins, img_size, model_img_size):
     )[0]
 
 
-def eomt_pixel_scores(model, img, model_img_size, temperature):
+def eomt_pixel_scores(model, img, model_img_size):
     crops, origins = window_img(img, model_img_size)
     crop_scores = []
 
@@ -204,7 +204,7 @@ def eomt_pixel_scores(model, img, model_img_size, temperature):
             mode="bilinear",
             align_corners=False,
         )
-        class_logits = class_layers[-1][..., :-1] / temperature
+        class_logits = class_layers[-1][..., :-1]
         pixel_scores = torch.einsum(
             "bqhw,bqc->bchw",
             mask_logits.sigmoid(),
@@ -323,42 +323,43 @@ def main():
         raise SystemExit("No input images matched.")
 
     rows = []
-    for temperature in args.temperatures:
-        score_lists = {method: [] for method in methods}
-        gt_list = []
+    score_lists_by_temp = {
+        temperature: {method: [] for method in methods}
+        for temperature in args.temperatures
+    }
+    gt_list = []
 
-        for path in input_paths:
-            print(f"T={temperature}: {path}")
-            image = Image.open(path).convert("RGB").resize((1024, 512), Image.BILINEAR)
-            img = torch.from_numpy(np.array(image)).permute(2, 0, 1).to(device)
+    for path in input_paths:
+        print(path)
+        image = Image.open(path).convert("RGB").resize((1024, 512), Image.BILINEAR)
+        img = torch.from_numpy(np.array(image)).permute(2, 0, 1).to(device)
 
-            with torch.no_grad():
-                pixel_scores = eomt_pixel_scores(
-                    model,
-                    img,
-                    model_img_size,
-                    temperature=temperature,
-                )
-                score_maps = anomaly_maps(pixel_scores, methods)
+        with torch.no_grad():
+            pixel_scores = eomt_pixel_scores(model, img, model_img_size)
 
-            ood_gts = load_ood_gt(gt_path_for_image(path))
-            if 1 not in np.unique(ood_gts):
-                continue
-
-            gt_list.append(ood_gts)
-            for method, score_map in score_maps.items():
-                score_lists[method].append(score_map)
-
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
-
-        if not gt_list:
-            print(f"No images with OOD pixels found for temperature {temperature}.")
+        ood_gts = load_ood_gt(gt_path_for_image(path))
+        if 1 not in np.unique(ood_gts):
             continue
 
-        ood_gts = np.array(gt_list)
-        ood_mask = ood_gts == 1
-        ind_mask = ood_gts == 0
+        gt_list.append(ood_gts)
+        for temperature in args.temperatures:
+            score_maps = anomaly_maps(pixel_scores / temperature, methods)
+            for method, score_map in score_maps.items():
+                score_lists_by_temp[temperature][method].append(score_map)
+
+        del pixel_scores
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    if not gt_list:
+        raise SystemExit("No images with OOD pixels found.")
+
+    ood_gts = np.array(gt_list)
+    ood_mask = ood_gts == 1
+    ind_mask = ood_gts == 0
+
+    for temperature in args.temperatures:
+        score_lists = score_lists_by_temp[temperature]
 
         for method in methods:
             anomaly_scores = np.array(score_lists[method])
