@@ -38,6 +38,7 @@ class Dataset(torch.utils.data.Dataset):
         target_folder_path_in_zip: Path = Path("./"),
         target_instance_folder_path_in_zip: Path = Path("./"),
         annotations_json_path_in_zip: Optional[Path] = None,
+        target_metadata: Optional[dict] = None,
     ):
         self.zip_path = zip_path
         self.target_parser = target_parser
@@ -49,6 +50,7 @@ class Dataset(torch.utils.data.Dataset):
         self.target_instance_zip_path = target_instance_zip_path
         self.target_folder_path_in_zip = target_folder_path_in_zip
         self.target_instance_folder_path_in_zip = target_instance_folder_path_in_zip
+        self.target_metadata = target_metadata or {}
 
         self.zip = None
         self.target_zip = None
@@ -212,6 +214,7 @@ class Dataset(torch.utils.data.Dataset):
             "labels": torch.tensor(labels),
             "is_crowd": torch.tensor(is_crowd),
         }
+        target.update(self.target_metadata)
 
         if self.transforms is not None:
             img, target = self.transforms(img, target)

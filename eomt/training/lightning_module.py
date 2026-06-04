@@ -59,8 +59,6 @@ class LightningModule(lightning.LightningModule):
         ckpt_path=None,
         delta_weights=False,
         load_ckpt_class_head=True,
-        freeze_backbone=False,
-        train_last_n_backbone_blocks: int = 0,
     ):
         super().__init__()
 
@@ -79,9 +77,6 @@ class LightningModule(lightning.LightningModule):
         self.llrd_l2_enabled = llrd_l2_enabled
 
         self.strict_loading = False
-
-        if freeze_backbone:
-            self._freeze_backbone(train_last_n_backbone_blocks)
 
         if delta_weights and ckpt_path:
             logging.info("Delta weights mode")
@@ -118,9 +113,6 @@ class LightningModule(lightning.LightningModule):
         ).tolist()
 
         for name, param in reversed(list(self.named_parameters())):
-            if not param.requires_grad:
-                continue
-
             lr = self.lr
 
             if name.replace("network.encoder.backbone.", "") in encoder_param_names:
@@ -238,11 +230,11 @@ class LightningModule(lightning.LightningModule):
                     on_step=True,
                 )
 
-    def init_metrics_semantic(self, ignore_idx, num_blocks):
+    def init_metrics_semantic(self, ignore_idx, num_blocks, num_classes=None):
         self.metrics = nn.ModuleList(
             [
                 MulticlassJaccardIndex(
-                    num_classes=self.num_classes,
+                    num_classes=num_classes or self.num_classes,
                     validate_args=False,
                     ignore_index=ignore_idx,
                     average=None,
@@ -418,6 +410,21 @@ class LightningModule(lightning.LightningModule):
                 f"metrics/{log_prefix}_iou_all{block_postfix}",
                 iou_all,
             )
+            self._log_cityscapes_common_iou(iou_per_class, log_prefix, block_postfix)
+
+    def _log_cityscapes_common_iou(self, iou_per_class, log_prefix, block_postfix):
+        if len(iou_per_class) < 19:
+            return
+
+        common_class_ids = torch.tensor(
+            [0, 1, 2, 3, 4, 6, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18],
+            device=iou_per_class.device,
+        )
+        common_iou = iou_per_class.index_select(0, common_class_ids)
+        self.log(
+            f"metrics/{log_prefix}_iou_cityscapes_common{block_postfix}",
+            float(common_iou.mean()),
+        )
 
     def _on_eval_epoch_end_instance(self, log_prefix):
         for i, metric in enumerate(self.metrics):  # type: ignore
@@ -869,28 +876,6 @@ class LightningModule(lightning.LightningModule):
                 msg += ", skipping class head"
             msg += ")"
             logging.info(msg)
-
-    def _freeze_backbone(self, train_last_n_blocks: int = 0):
-        backbone = self.network.encoder.backbone
-        train_last_n_blocks = max(0, train_last_n_blocks)
-
-        for p in backbone.parameters():
-            p.requires_grad = False
-
-        if train_last_n_blocks:
-            for block in backbone.blocks[-train_last_n_blocks:]:
-                for p in block.parameters():
-                    p.requires_grad = True
-
-            if hasattr(backbone, "norm"):
-                for p in backbone.norm.parameters():
-                    p.requires_grad = True
-
-        frozen = sum(p.numel() for p in backbone.parameters() if not p.requires_grad)
-        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        logging.info(
-            f"Frozen {frozen:,} backbone parameters; {trainable:,} parameters remain trainable"
-        )
 
     def _add_state_dicts(self, state_dict1, state_dict2):
         summed = {}
