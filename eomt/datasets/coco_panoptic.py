@@ -7,6 +7,7 @@
 from pathlib import Path
 from typing import Union
 from torch.utils.data import DataLoader
+from torchvision.datasets import Cityscapes
 
 from datasets.lightning_data_module import LightningDataModule
 from datasets.transforms import Transforms
@@ -198,7 +199,56 @@ class COCOPanoptic(LightningDataModule):
 
         return masks, labels, is_crowd
 
+    @staticmethod
+    def cityscapes_target_parser(target, **kwargs):
+        masks, labels = [], []
+
+        for label_id in target[0].unique():
+            cls = next((cls for cls in Cityscapes.classes if cls.id == label_id), None)
+
+            if cls is None or cls.ignore_in_eval:
+                continue
+
+            masks.append(target[0] == label_id)
+            labels.append(cls.train_id)
+
+        return masks, labels, [False for _ in range(len(masks))]
+
+    def _cityscapes_zips_available(self):
+        return (
+            Path(self.path, "leftImg8bit_trainvaltest.zip").exists()
+            and Path(self.path, "gtFine_trainvaltest.zip").exists()
+        )
+
+    def _setup_cityscapes_semantic_eval(self):
+        cityscapes_dataset_kwargs = {
+            "img_suffix": ".png",
+            "target_suffix": ".png",
+            "img_stem_suffix": "leftImg8bit",
+            "target_stem_suffix": "gtFine_labelIds",
+            "zip_path": Path(self.path, "leftImg8bit_trainvaltest.zip"),
+            "target_zip_path": Path(self.path, "gtFine_trainvaltest.zip"),
+            "target_parser": self.cityscapes_target_parser,
+            "check_empty_targets": self.check_empty_targets,
+        }
+        self.train_dataset = Dataset(
+            transforms=self.transforms,
+            img_folder_path_in_zip=Path("./leftImg8bit/train"),
+            target_folder_path_in_zip=Path("./gtFine/train"),
+            **cityscapes_dataset_kwargs,
+        )
+        self.val_dataset = Dataset(
+            img_folder_path_in_zip=Path("./leftImg8bit/val"),
+            target_folder_path_in_zip=Path("./gtFine/val"),
+            target_metadata={"eval_task": "coco_to_cityscapes_semantic"},
+            **cityscapes_dataset_kwargs,
+        )
+
     def setup(self, stage: Union[str, None] = None) -> LightningDataModule:
+        if self._cityscapes_zips_available():
+            self._setup_cityscapes_semantic_eval()
+            return self
+
         dataset_kwargs = {
             "img_suffix": ".jpg",
             "target_suffix": ".png",
