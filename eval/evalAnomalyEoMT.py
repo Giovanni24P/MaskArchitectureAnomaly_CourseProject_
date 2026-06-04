@@ -272,8 +272,28 @@ def load_ood_gt(path_gt):
 def expand_inputs(patterns):
     input_paths = []
     for pattern in patterns:
-        input_paths.extend(glob.glob(os.path.expanduser(str(pattern))))
+        expanded = os.path.expanduser(str(pattern))
+        if os.path.isdir(expanded):
+            for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
+                input_paths.extend(glob.glob(os.path.join(expanded, ext)))
+                input_paths.extend(glob.glob(os.path.join(expanded, ext.upper())))
+        else:
+            input_paths.extend(glob.glob(expanded))
     return sorted(input_paths)
+
+
+def describe_unmatched_inputs(patterns):
+    lines = ["No input images matched. Checked:"]
+    for pattern in patterns:
+        expanded = os.path.expanduser(str(pattern))
+        parent = expanded if os.path.isdir(expanded) else os.path.dirname(expanded)
+        parent = parent or "."
+        lines.append(f"  pattern: {expanded}")
+        lines.append(f"  parent exists: {os.path.isdir(parent)} ({parent})")
+        if os.path.isdir(parent):
+            sample = sorted(os.listdir(parent))[:10]
+            lines.append(f"  first entries: {sample}")
+    return "\n".join(lines)
 
 
 def main():
@@ -333,7 +353,7 @@ def main():
 
     input_paths = expand_inputs(args.input)
     if not input_paths:
-        raise SystemExit("No input images matched.")
+        raise SystemExit(describe_unmatched_inputs(args.input))
 
     rows = []
     score_lists_by_temp = {
