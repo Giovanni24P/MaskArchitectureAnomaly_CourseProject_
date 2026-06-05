@@ -236,7 +236,7 @@ def anomaly_maps(pixel_scores, methods):
     if "maxentropy" in methods:
         scores["maxentropy"] = -(probs * torch.log(probs.clamp_min(1e-12))).sum(dim=0)
     if "rba" in methods:
-        scores["rba"] = 1.0 - torch.sigmoid(pixel_scores).sum(dim=0)
+        scores["rba"] = -torch.tanh(pixel_scores).sum(dim=0)
     return {name: value.detach().cpu().numpy() for name, value in scores.items()}
 
 
